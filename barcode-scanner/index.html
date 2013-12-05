@@ -2,17 +2,15 @@
 <html>
   <head>
     <title>HTML5 Webcam Test</title>
-    <style>
-      video {
-        margin-top: -320px;
-        position: absolute;
-      }
-    </style>
+    <script type="text/javascript" src="http://code.jquery.com/jquery-1.8.3.js"></script>
+    <script type="text/javascript" src="barcode.js"></script>
+    <script type="text/javascript" src="main.js"></script>
   </head>
   <body>
-    <video autoplay></video>
-    <canvas></canvas>
-    <script src="barcode.js"></script>
-    <script src="main.js"></script>
+    <video id="video"></video>
+    <button id="startbutton">Start scanning</button>
+    <canvas id="canvas"></canvas>
+    <p id="result"></p>
+    <img src="" id="barcode" alt="barcode">
   </body>
 </html>

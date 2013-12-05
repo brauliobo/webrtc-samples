@@ -1,106 +1,138 @@
-var video = document.querySelector('video');
-var canvas = document.querySelector('canvas');
-var ctx = canvas.getContext('2d');
-var width;
-var height;
+barcode_scanner = {
 
-// 2D array of buckets[position][frequency]
-var buckets = emptyArray(12);
+  result: {
+    element: null,
 
-navigator.webkitGetUserMedia('video', onStream, onError);
+    show: function(code) {
+      this.element.innerHTML = code;
+    },
+  },
 
-function onStream(stream) {
-  video.src = window.webkitURL.createObjectURL(stream)
+  decode: {
+    tobias: {
+      do: function(photo) {
+        var code = getBarcodeFromImage(photo);
+        result.show(code);
+      },
+    },
+
+    eddie: {
+      workerCount: 0,
+      resultArray: [],
+
+      do: function(canvas) {
+        //if (this.workerCount > 0) return;
+        this.workerCount = 2;
+        this.resultArray = [];
+        barcode_scanner.decode.canvas = canvas;
+        barcode_scanner.decode.ctx = canvas.getContext('2d');
+
+        var DecodeWorker = new Worker("DecoderWorker.js");
+        DecodeWorker.onmessage = this.receiveMessage;
+        DecodeWorker.postMessage({pixels: barcode_scanner.decode.ctx.getImageData(0,0,canvas.width,canvas.height).data, cmd: "normal"});
+      },
+
+      receiveMessage: function(e) {
+        var canvas = barcode_scanner.decode.canvas;
+        var ctx = barcode_scanner.decode.ctx;
+
+        barcode_scanner.decode.eddie.workerCount--;
+        if(e.data.success){
+          var tempArray = e.data.result;
+          for(var i = 0; i < tempArray.length; i++) {
+            if(barcode_scanner.decode.eddie.resultArray.indexOf(tempArray[i]) == -1) {
+              barcode_scanner.decode.eddie.resultArray.push(tempArray[i]);
+            }
+          }
+          barcode_scanner.result.show(barcode_scanner.decode.eddie.resultArray.join("<br />"));
+          barcode_scanner.decode.eddie.workerCount = 0;
+        }else {
+          if(barcode_scanner.decode.eddie.workerCount == 1) {
+            var FlipWorker = new Worker("DecoderWorker.js");
+            FlipWorker.onmessage = barcode_scanner.decode.eddie.receiveMessage;
+            FlipWorker.postMessage({pixels: ctx.getImageData(0,0,canvas.width,canvas.height).data, cmd: "flip"});
+          }
+        }
+        if(barcode_scanner.decode.eddie.workerCount == 0){
+          if(barcode_scanner.decode.eddie.resultArray.length === 0) {
+            barcode_scanner.result.show("Decoding failed.");
+          }else {
+            barcode_scanner.result.show(barcode_scanner.decode.eddie.resultArray.join("<br />"));
+          }
+        }
+      },
+    },
+  },
 }
 
-function onError(err) {
-  console.log('Unable to get video stream!')
-}
+jQuery(function ($) {
 
-video.addEventListener('play', function() {
-  width = video.clientWidth;
-  height = video.clientHeight;
-  canvas.width = width;
-  canvas.height = height;
-  // Start getting stills from the video stream.
-  webkitRequestAnimationFrame(scan);
-}, false);
+  var streaming = false,
+  video        = document.querySelector('#video'),
+  canvas       = document.querySelector('#canvas'),
+  photo        = document.querySelector('#barcode'),
+  startbutton  = document.querySelector('#startbutton'),
+  result       = document.querySelector('#result'),
+  width = 720,
+  height = 0;
 
-/**
- * Returns the barcode if confident. Otherwise, returns false.
- */
-function computeBarcode() {
-  var code = '';
-  for (var pos = 0; pos < buckets.length; pos++) {
-    var bucket = buckets[pos];
-    var total = sum(bucket);
-    var isConfident = false;
-    var num = null;
+  navigator.getMedia = ( navigator.getUserMedia ||
+                        navigator.webkitGetUserMedia ||
+                        navigator.mozGetUserMedia ||
+                        navigator.msGetUserMedia);
 
-    for (var value = 0; value < 10; value++) {
-      var prob = bucket[value] / total;
-      if (prob > 0.4) {
-        isConfident = true;
-        num = value;
+  navigator.getMedia({video: true, audio: false}, function(stream) {
+      if (navigator.mozGetUserMedia) {
+        video.mozSrcObject = stream;
+      } else {
+        var vendorURL = window.URL || window.webkitURL;
+        video.src = vendorURL.createObjectURL(stream);
       }
+      video.play();
+    },
+    function(err) {
+      console.log("An error occured! " + err);
     }
+  );
 
-    if (isConfident) {
-      code += num;
-    } else {
-      console.log('failed on position',  pos);
-      return false;
+  video.addEventListener('canplay', function(ev){
+    if (!streaming) {
+      height = video.videoHeight / (video.videoWidth/width);
+      video.setAttribute('width', width);
+      video.setAttribute('height', height);
+      canvas.setAttribute('width', width);
+      canvas.setAttribute('height', height);
+      streaming = true;
     }
-  }
-  return code;
-}
+  }, false);
 
-function gatherData(barcode) {
-  for (var pos = 0; pos < barcode.length; pos++) {
-    if (buckets[pos] == 0) {
-      // Populate with an empty array of values.
-      buckets[pos] = emptyArray(10);
-    }
-    var value = barcode[pos];
-    if (value != 'X') {
-      console.log('value', pos, value);
-      value = parseInt(value);
-      buckets[pos][value] += 1;
-    }
-  }
-}
+  function takepicture() {
 
-function sum(arr) {
-  var total = 0;
-  for (var i = 0; i < arr.length; i++) {
-    total += arr[i];
+    var data = canvas.toDataURL('image/png');
+    photo.setAttribute('src', data);
   }
-  return total;
-}
 
-function emptyArray(length) {
-  var arr = [];
-  for (var i = 0; i < length; i++) {
-    arr.push(0);
-  }
-  return arr;
-}
+  function scan() {
+    takepicture();
 
-function scan() {
-  ctx.drawImage(video, 0, 0, width, height);
-  // Render a barcode scanning animation in a canvas element.
-  // Run the barcode recognizer software on each still.
-  var barcode = getBarcodeFromImage(canvas);
-  // For each result from the scan, populate the buckets.
-  gatherData(barcode);
-  // Check if we've found the barcode:
-  var verifiedBarcode = computeBarcode();
-  // If there's a match:
-  if (verifiedBarcode) {
-    // Play a sound, make an XHR to get more information about the product.
-    alert('BARCODE FOUND: ' + verifiedBarcode);
-  } else {
-    // Otherwise, go again!
-    webkitRequestAnimationFrame(scan);
+    canvas.width = width;
+    canvas.height = height;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, width, height);
+
+    barcode_scanner.result.element = result;
+    barcode_scanner.decode.eddie.do(canvas);
+
+    //scanTimeout();
   }
-}
+
+  function scanTimeout(){
+    setTimeout(scan, 100);
+  }
+
+  startbutton.addEventListener('click', function(ev){
+    scanTimeout();
+    ev.preventDefault();
+  }, false);
+
+});
